@@ -4,7 +4,9 @@
 
 # What's this?
 
-In the context of __clustering__ task, `flexible-clustering-tree` provides you __easy__ and __controllable__ clustering framework. 
+In the context of __clustering__ task, `flexible-clustering-tree` provides you __easy__ and __controllable__ clustering framework.
+
+![](https://user-images.githubusercontent.com/1772712/47308081-9980cd00-d66b-11e8-98c0-a275db021cd7.gif) 
 
 # Background
 
