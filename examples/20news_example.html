@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<head>
+<meta charset="utf-8">
+<style type="text/css">
+div.tooltip {
+    position: absolute;
+    text-align: left;
+    width: 500px;
+    height: auto;
+    padding: 2px;
+    font: 12px sans-serif;
+    background: lightsteelblue;
+    border: 0px;
+    border-radius: 8px;
+    pointer-events: none;
+}
+
+.overlay {
+    background-color: #EEE;
+}
+
+.node {
+    cursor: pointer;
+}
+
+.node circle {
+    fill: #fff;
+    stroke: steelblue;
+    stroke-width: 1.5px;
+}
+
+.node text {
+    font-size: 10px;
+    font-family: sans-serif;
+}
+
+.link {
+    fill: none;
+    stroke: #ccc;
+    stroke-width: 1.5px;
+}
+
+.templink {
+    fill: none;
+    stroke: red;
+    stroke-width: 3px;
+}
+
+.ghostCircle.show {
+    display: block;
+}
+
+.ghostCircle,
+.activeDrag .ghostCircle {
+    display: none;
+}
+
+
+svg{
+    display: block;
+    margin: auto;
+}
+
+.found {
+    fill: #ff4136;
+    stroke: #ff4136;
+}
+
+.search {
+    float: left;
+    font: 10px sans-serif;
+    width: 30%;
+}
+
+ul.select2-results {
+    max-height: 100px;
+}
+
+.select2-container,
+.select2-drop,
+.select2-search,
+.select2-search input {
+    font: 10px sans-serif;
+    width: 75%;
+}
+
+#block_container {
+    display: inline;
+}
+</style>
+<script src="http://code.jquery.com/jquery-1.10.2.min.js"></script>
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<link rel="stylesheet" type="text/css" href="http://cdnjs.cloudflare.com/ajax/libs/select2/3.5.2/select2.min.css"></link>
+<script type="text/javascript" src="http://cdnjs.cloudflare.com/ajax/libs/select2/3.5.2/select2.min.js"></script>
+</head>
+
+<body>
+    <div id="tree-container">
+      <script type="text/javascript">
+    // SCRIPT MAIN
+    // Calculate total nodes, max label length
+    var totalNodes = 0;
+    var maxLabelLength = 0;
+    // variables for drag/drop
+    var selectedNode = null;
+    var draggingNode = null;
+    // panning variables
+    var panSpeed = 200;
+    var panBoundary = 20; // Within 20px from edges will pan when dragging.
+    // Misc. variables
+    var i = 0, duration = 750;
+    var root;
+    // size of the diagram
+    var viewerWidth = $(document).width();
+     var viewerHeight = $(document).height();
+    var tree = d3.layout.tree().size([viewerHeight, viewerWidth]);
+    // define a d3 diagonal projection for use by the node paths later on.
+    var diagonal = d3.svg.diagonal()
+        .projection(function(d) {
+            return [d.y, d.x];
+        });
+
+
+    // define the zoomListener which calls the zoom function on the "zoom" event constrained within the scaleExtents
+    var zoomListener = d3.behavior.zoom().scaleExtent([0.1, 3]).on("zoom", zoom);
+
+    // # MAIN PROCESS
+    // get data from embedded object
+    var myData = getData();
+    // define the baseSvg, attaching a class for styling and the zoomListener
+    var baseSvg = d3.select("body").append("svg")
+        .attr("width", viewerWidth)
+        .attr("height", viewerHeight)
+        .attr("class", "overlay")
+        .call(zoomListener);
+    // Define the drag listeners for drag/drop behaviour of nodes.
+    dragListener = d3.behavior.drag()
+        .on("dragstart", function(d) {
+            if (d == root) {
+                return;
+            }
+            dragStarted = true;
+            nodes = tree.nodes(d);
+            d3.event.sourceEvent.stopPropagation();
+            // it's important that we suppress the mouseover event on the node being dragged. Otherwise it will absorb the mouseover event and the underlying node will not detect it d3.select(this).attr('pointer-events', 'none');
+        })
+        .on("drag", function(d) {
+            if (d == root) {
+                return;
+            }
+            if (dragStarted) {
+                domNode = this;
+                initiateDrag(d, domNode);
+            }
+            // get coords of mouseEvent relative to svg container to allow for panning
+            relCoords = d3.mouse($('svg').get(0));
+            if (relCoords[0] < panBoundary) {
+                panTimer = true;
+                pan(this, 'left');
+            } else if (relCoords[0] > ($('svg').width() - panBoundary)) {
+                panTimer = true;
+                pan(this, 'right');
+            } else if (relCoords[1] < panBoundary) {
+                panTimer = true;
+                pan(this, 'up');
+            } else if (relCoords[1] > ($('svg').height() - panBoundary)) {
+                panTimer = true;
+                pan(this, 'down');
+            } else {
+                try {
+                    clearTimeout(panTimer);
+                } catch (e) {
+                }
+            }
+            d.x0 += d3.event.dy;
+            d.y0 += d3.event.dx;
+            var node = d3.select(this);
+            node.attr("transform", "translate(" + d.y0 + "," + d.x0 + ")");
+            updateTempConnector();
+        }).on("dragend", function(d) {
+            if (d == root) {
+                return;
+            }
+            domNode = this;
+            if (selectedNode) {
+                // now remove the element from the parent, and insert it into the new elements children
+                var index = draggingNode.parent.children.indexOf(draggingNode);
+                if (index > -1) {
+                    draggingNode.parent.children.splice(index, 1);
+                }
+                if (typeof selectedNode.children !== 'undefined' || typeof selectedNode._children !== 'undefined') {
+                    if (typeof selectedNode.children !== 'undefined') {
+                        selectedNode.children.push(draggingNode);
+                    } else {
+                        selectedNode._children.push(draggingNode);
+                    }
+                } else {
+                    selectedNode.children = [];
+                    selectedNode.children.push(draggingNode);
+                }
+                // Make sure that the node being added to is expanded so user can see added node is correctly moved
+                expand(selectedNode);
+                sortTree();
+                endDrag();
+            } else {
+                endDrag();
+            }
+        });
+    // Append a group which holds all nodes and which the zoom Listener can act upon.
+    var svgGroup = baseSvg.append("g");
+    // Function to update the temporary connector indicating dragging affiliation
+    var updateTempConnector = function() {
+        var data = [];
+        if (draggingNode !== null && selectedNode !== null) {
+            // have to flip the source coordinates since we did this for the existing connectors on the original tree
+            data = [{
+                source: {
+                    x: selectedNode.y0,
+                    y: selectedNode.x0
+                },
+                target: {
+                    x: draggingNode.y0,
+                    y: draggingNode.x0
+                }
+            }];
+        }
+        var link = svgGroup.selectAll(".templink").data(data);
+        link.enter().append("path")
+            .attr("class", "templink")
+            .attr("d", d3.svg.diagonal())
+            .attr('pointer-events', 'none');
+        link.attr("d", d3.svg.diagonal());
+        link.exit().remove();
+    };
+    // Call visit function to establish maxLabelLength
+    visit(myData, function(d) {
+        totalNodes++;
+        maxLabelLength = Math.max(d.name.length, maxLabelLength);
+    }, function(d) {
+        return d.children && d.children.length > 0 ? d.children : null;
+    });
+    // Sort the tree initially incase the JSON isn't in a sorted order.
+    sortTree();
+    root = myData;
+    root.x0 = viewerHeight / 2;
+    root.y0 = 0;
+    root.children.forEach(collapse);
+    update(root);
+    d3.select(self.frameElement).style("height", viewerHeight + "px");
+    function update(source) {
+        // Compute the new height, function counts total children of root node and sets tree height accordingly.
+        // This prevents the layout looking squashed when new nodes are made visible or looking sparse when nodes are removed
+        // This makes the layout more consistent.
+        var levelWidth = [1];
+        var childCount = function(level, n) {
+            if (n.children && n.children.length > 0) {
+                if (levelWidth.length <= level + 1) levelWidth.push(0);
+                levelWidth[level + 1] += n.children.length;
+                n.children.forEach(function(d) {
+                    childCount(level + 1, d);
+                });
+            }
+        };
+        childCount(0, root);
+        var newHeight = d3.max(levelWidth) * 25; // 25 pixels per line
+        tree = tree.size([newHeight, viewerWidth]);
+        // Compute the new tree layout.
+        var nodes = tree.nodes(root).reverse(),
+            links = tree.links(nodes);
+        // add the tool tip
+        var div = d3.select("body").append("div")
+            .attr("class", "tooltip")
+            .style("opacity", 0);
+        // Set widths between levels based on maxLabelLength.
+        nodes.forEach(function(d) {
+            d.y = (d.depth * (maxLabelLength * 50)); //maxLabelLength * 10px
+            // alternatively to keep a fixed scale one can set a fixed depth per level
+            // Normalize for fixed-depth by commenting out below line
+            // d.y = (d.depth * 500); //500px per level.
+        });
+        // Update the nodes…
+        node = svgGroup.selectAll("g.node")
+            .data(nodes, function(d) {
+                return d.id || (d.id = ++i);
+            });
+        // Enter any new nodes at the parent's previous position.
+        var nodeEnter = node.enter().append("g")
+            .call(dragListener)
+            .attr("class", "node")
+            .attr("transform", function(d) {
+                return "translate(" + source.y0 + "," + source.x0 + ")";
+            })
+            .on('click', click)
+            .on("mouseover", function(d) {
+                div.transition().duration(200).style("opacity", .9);
+                if (d.label === undefined) {
+                    // if branch node
+                        div.html(
+                                "cluster-id: " + d.name + "<br/>" +
+                                "depth-level:" + d.depth + "<br/>" +
+                                "clustering-method:" + d["clustering-method"] + "<br/>" +
+                                "#data-id: " + d["cluster-information"]["#data"] + "<br/>" +
+                                "frequent_labels: " + d["cluster-information"]["frequent_labels"].map(x => x.join('->'))
+                                )
+                        .style("left", (d3.event.pageX) + "px")
+                        .style("top", (d3.event.pageY - 28) + "px");
+                } else {
+                    // if leaf node
+                        div.html(
+                                "data-id:" + d.name + "<br/>" +
+                                "label:" + d.label + "<br/>" +
+                                "clustering-method:" + d["clustering-method"] + "<br/>" +
+                                "information:" + JSON.stringify(d["information"])
+                            )
+                        .style("left", (d3.event.pageX) + "px")
+                        .style("top", (d3.event.pageY - 28) + "px");
+                }
+            })
+            .on("mouseout", function(d) {
+                div.transition()
+                    .duration(500)
+                    .style("opacity", 0);
+            });
+        nodeEnter.append("circle")
+            .attr('class', 'nodeCircle')
+            .attr("r", 0)
+            .style("fill", function(d) {
+                return d._children ? "lightsteelblue" : "#fff";
+            });
+        nodeEnter.append("text")
+            .attr("x", function(d) {
+                return d.children || d._children ? -10 : 10;
+            })
+            .attr("dy", ".35em")
+            .attr('class', 'nodeText')
+            .attr("text-anchor", function(d) {
+                return d.children || d._children ? "end" : "start";
+            })
+            .text(function(d) {
+                return d.name;
+            })
+            .style("fill-opacity", 0);
+        // phantom node to give us mouseover in a radius around it
+        nodeEnter.append("circle")
+            .attr('class', 'ghostCircle')
+            .attr("r", 30)
+            .attr("opacity", 0.2); // change this to zero to hide the target area
+        // Update the text to reflect whether node has children or not.
+        node.select('text')
+            .attr("x", function(d) {
+                return d.children || d._children ? -10 : 10;
+            })
+            .attr("text-anchor", function(d) {
+                return d.children || d._children ? "end" : "start";
+            })
+            .text(function(d) {
+                    // generate text next to a node
+                    var text_label_name = "";
+                    if ("label" in d){
+                        text_label_name = "label:" + d.label + "/" + "data-id:";
+                        return text_label_name + d.name;
+                    } else {
+                        if (d.name === "Root"){
+                            text_label_name = "cluster-id:";
+                            return text_label_name + d.name;
+                        } else {
+                        text_label_name = d["cluster-information"]["frequent_labels"]
+                            .sort(function(a,b){
+                                if(a[1]>b[1]) return -1;
+                                if(b[1]>a[1]) return 1;
+                                return 0;})
+                            .map(x => x.join('->'));
+                        return text_label_name;
+                        }
+                    }
+            });
+
+        // Transition nodes to their new position.
+        var nodeUpdate = node.transition()
+            .duration(duration)
+            .attr("transform", function(d) {
+                return "translate(" + d.y + "," + d.x + ")";
+            });
+
+        nodeUpdate.select("circle.nodeCircle")
+            .attr("r", function(d) {
+                if (d.label !== undefined) {
+                    // if leaf node
+                    return 1.0;
+                } else {
+                    // if branch node
+                    return 5.0;
+                }
+            })
+            .style("fill", function(d) {
+                if (d.class === "found") {
+                    return "#ff4136"; //red
+                } else if (d._children) {
+                    return "lightsteelblue";
+                } else {
+                    return "#fff";
+                }
+            })
+            .style("stroke", function(d) {
+                if (d.class === "found") {
+                    return "#ff4136"; //red
+                }
+            });
+        // Fade the text in
+        nodeUpdate.select("text")
+            .style("fill-opacity", 1);
+        // Transition exiting nodes to the parent's new position.
+        var nodeExit = node.exit().transition()
+            .duration(duration)
+            .attr("transform", function(d) {
+                return "translate(" + source.y + "," + source.x + ")";
+            })
+            .remove();
+        nodeExit.select("circle")
+            .attr("r", 0);
+        nodeExit.select("text")
+            .style("fill-opacity", 0);
+        // Update the links…
+        var link = svgGroup.selectAll("path.link")
+            .data(links, function(d) {
+                return d.target.id;
+            });
+        // Enter any new links at the parent's previous position.
+        link.enter().insert("path", "g")
+            .attr("class", "link")
+            .attr("d", function(d) {
+                var o = {
+                    x: source.x0,
+                    y: source.y0
+                };
+                return diagonal({
+                    source: o,
+                    target: o
+                });
+            });
+        // Transition links to their new position.
+        link.transition()
+            .duration(duration)
+            .attr("d", diagonal)
+            .style("stroke", function(d) {
+                if (d.target.class === "found") {
+                    return "#ff4136";
+                }
+            })
+            .style("stroke-width", function(d) {
+                // 見つかったノードへのエッジは太くする
+                if (d.target.class === "found") {
+                    return 3.0;
+                }
+            });
+        // Transition exiting nodes to the parent's new position.
+        link.exit().transition()
+            .duration(duration)
+            .attr("d", function(d) {
+                var o = {
+                    x: source.x,
+                    y: source.y
+                };
+                return diagonal({
+                    source: o,
+                    target: o
+                });
+            })
+            .remove();
+        // Stash the old positions for transition.
+        nodes.forEach(function(d) {
+            d.x0 = d.x;
+            d.y0 = d.y;
+        });
+    };
+
+    // # FUNCTION
+    function visit(parent, visitFn, childrenFn) {
+        if (!parent) return;
+        visitFn(parent);
+        var children = childrenFn(parent);
+        if (children) {
+            var count = children.length;
+            for (var i = 0; i < count; i++) {
+                visit(children[i], visitFn, childrenFn);
+            }
+        }
+    }
+        function sortTree() {
+            /**
+             * sort the tree according to #data in a cluster
+             */
+            tree.sort(function(a, b) {
+                if (a.label === undefined || b.label === undefined) {
+                    // if branch node
+                    if (b["cluster-information"]["#data"] === a["cluster-information"]["#data"]) {
+                        return b.name.toString().toLowerCase() < a.name.toString().toLowerCase() ? 1 : -1;
+                    } else {
+                        return b["cluster-information"]["#data"] < a["cluster-information"]["#data"] ? 1 : -1;
+                    }
+                } else {
+                    // if leaf node
+                    return b.label.toString().toLowerCase() < a.label.toString().toLowerCase() ? 1 : -1;
+                }
+            });
+        };
+
+    function click(d) {
+        if (d3.event.defaultPrevented) return; // click suppressed
+        d = toggleChildren(d);
+        clearAll(root);
+        update(d);
+        centerNode(d);
+    }
+
+    function clearAll(d) {
+        d.class = "";
+        if (d.children)
+            d.children.forEach(clearAll);
+        else if (d._children)
+            d._children.forEach(clearAll);
+    }
+
+    function toggleChildren(d) {
+        if (d.children) {
+            d._children = d.children;
+            d.children = null;
+        } else if (d._children) {
+            d.children = d._children;
+            d._children = null;
+        }
+        return d;
+    }
+    function centerNode(source) {
+        scale = zoomListener.scale();
+        x = -source.y0;
+        y = -source.x0;
+        x = x * scale + viewerWidth / 2;
+        y = y * scale + viewerHeight / 2;
+        d3.select('g').transition()
+            .duration(duration)
+            .attr("transform", "translate(" + x + "," + y + ")scale(" + scale + ")");
+        zoomListener.scale(scale);
+        zoomListener.translate([x, y]);
+    }
+    //
+    function zoom() {
+        svgGroup.attr("transform", "translate(" + d3.event.translate + ")scale(" + d3.event.scale + ")");
+    }
+    function endDrag() {
+        selectedNode = null;
+        d3.selectAll('.ghostCircle').attr('class', 'ghostCircle');
+        d3.select(domNode).attr('class', 'node');
+        // now restore the mouseover event or we won't be able to drag a 2nd time
+        d3.select(domNode).select('.ghostCircle').attr('pointer-events', '');
+        updateTempConnector();
+        if (draggingNode !== null) {
+            update(root);
+            // centerNode(draggingNode);
+            draggingNode = null;
+        }
+    }
+    function initiateDrag(d, domNode) {
+        draggingNode = d;
+        d3.select(domNode).select('.ghostCircle').attr('pointer-events', 'none');
+        d3.selectAll('.ghostCircle').attr('class', 'ghostCircle show');
+        d3.select(domNode).attr('class', 'node activeDrag');
+        svgGroup.selectAll("g.node").sort(function(a, b) { // select the parent and sort the path's
+            if (a.id != draggingNode.id) return 1; // a is not the hovered element, send "a" to the back
+            else return -1; // a is the hovered element, bring "a" to the front
+        });
+        // if nodes has children, remove the links and nodes
+        if (nodes.length > 1) {
+            // remove link paths
+            links = tree.links(nodes);
+            nodePaths = svgGroup.selectAll("path.link")
+                .data(links, function(d) {
+                    return d.target.id;
+                }).remove();
+            // remove child nodes
+            nodesExit = svgGroup.selectAll("g.node")
+                .data(nodes, function(d) {
+                    return d.id;
+                }).filter(function(d, i) {
+                    if (d.id == draggingNode.id) {
+                        return false;
+                    }
+                    return true;
+                }).remove();
+        }
+        // remove parent link
+        parentLink = tree.links(tree.nodes(draggingNode.parent));
+        svgGroup.selectAll('path.link').filter(function(d, i) {
+            if (d.target.id == draggingNode.id) {
+                return true;
+            }
+            return false;
+        }).remove();
+        dragStarted = null;
+    }
+    function expand(d) {
+        // 選択された木（部分木）を展開する関数
+        var children = (d.children) ? d.children : d._children; // todo この記法は何ンゴ？
+        if (d._children) {
+            d.children = d._children;
+            d._children = null;
+        }
+        if (children)
+            children.forEach(expand);
+    }
+    function expandAll() {
+        expand(root);
+        update(root);
+    }
+    function collapseAll() {
+        root.children.forEach(collapse);
+        collapse(root);
+        update(root);
+    }
+    function collapse(d) {
+        if (d.children) {
+            d._children = d.children;
+            d._children.forEach(collapse);
+            d.children = null;
+        }
+    }
+    function pan(domNode, direction) {
+        var speed = panSpeed;
+        if (panTimer) {
+            clearTimeout(panTimer);
+            translateCoords = d3.transform(svgGroup.attr("transform"));
+            if (direction == 'left' || direction == 'right') {
+                translateX = direction == 'left' ? translateCoords.translate[0] + speed : translateCoords.translate[0] - speed;
+                translateY = translateCoords.translate[1];
+            } else if (direction == 'up' || direction == 'down') {
+                translateX = translateCoords.translate[0];
+                translateY = direction == 'up' ? translateCoords.translate[1] + speed : translateCoords.translate[1] - speed;
+            }
+            scaleX = translateCoords.scale[0];
+            scaleY = translateCoords.scale[1];
+            scale = zoomListener.scale();
+            svgGroup.transition().attr("transform", "translate(" + translateX + "," + translateY + ")scale(" + scale + ")");
+            d3.select(domNode).select('g.node').attr("transform", "translate(" + translateX + "," + translateY + ")");
+            zoomListener.scale(zoomListener.scale());
+            zoomListener.translate([translateX, translateY]);
+            panTimer = setTimeout(function() {
+                pan(domNode, speed, direction);
+            }, 50);
+        }
+    }
+
+    function getData() {
+    var data = {"name": "Root", "children": [{"name": "0", "cluster-information": {"#data": 14, "node-type": "branch", "frequent_labels": [["misc.forsale", 2], ["comp.graphics", 2], ["comp.sys.mac.hardware", 2]]}, "_children": [{"name": "11", "cluster-information": {"#data": 1, "node-type": "branch", "frequent_labels": [["comp.os.ms-windows.misc", 1]]}, "_children": [{"name": "820", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "12", "cluster-information": {"#data": 3, "node-type": "branch", "frequent_labels": [["comp.graphics", 1], ["sci.space", 1], ["comp.sys.mac.hardware", 1]]}, "_children": [{"name": "237", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "645", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "711", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "13", "cluster-information": {"#data": 1, "node-type": "branch", "frequent_labels": [["comp.graphics", 1]]}, "_children": [{"name": "82", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "14", "cluster-information": {"#data": 7, "node-type": "branch", "frequent_labels": [["misc.forsale", 2], ["talk.politics.mideast", 2], ["rec.motorcycles", 1]]}, "_children": [{"name": "12", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "222", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "223", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "336", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "396", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "426", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "755", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "15", "cluster-information": {"#data": 2, "node-type": "branch", "frequent_labels": [["sci.crypt", 1], ["comp.windows.x", 1]]}, "_children": [{"name": "887", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "931", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}], "clustering-method": "HDBSCAN", "cluster_size": null}, {"name": "1", "cluster-information": {"#data": 5, "node-type": "branch", "frequent_labels": [["soc.religion.christian", 4], ["talk.religion.misc", 1]]}, "_children": [{"name": "288", "clustering-method": "HDBSCAN", "label": "soc.religion.christian", "information": {}}, {"name": "317", "clustering-method": "HDBSCAN", "label": "talk.religion.misc", "information": {}}, {"name": "448", "clustering-method": "HDBSCAN", "label": "soc.religion.christian", "information": {}}, {"name": "697", "clustering-method": "HDBSCAN", "label": "soc.religion.christian", "information": {}}, {"name": "719", "clustering-method": "HDBSCAN", "label": "soc.religion.christian", "information": {}}], "clustering-method": "HDBSCAN", "cluster_size": null}, {"name": "2", "cluster-information": {"#data": 10, "node-type": "branch", "frequent_labels": [["alt.atheism", 10]]}, "_children": [{"name": "15", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "424", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "480", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "580", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "656", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "690", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "747", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "791", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "883", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "901", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}], "clustering-method": "HDBSCAN", "cluster_size": null}, {"name": "3", "cluster-information": {"#data": 9, "node-type": "branch", "frequent_labels": [["sci.crypt", 9]]}, "_children": [{"name": "204", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "244", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "301", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "400", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "433", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "702", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "828", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "888", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "955", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}], "clustering-method": "HDBSCAN", "cluster_size": null}, {"name": "4", "cluster-information": {"#data": 7, "node-type": "branch", "frequent_labels": [["talk.politics.guns", 7]]}, "_children": [{"name": "39", "clustering-method": "HDBSCAN", "label": "talk.politics.guns", "information": {}}, {"name": "161", "clustering-method": "HDBSCAN", "label": "talk.politics.guns", "information": {}}, {"name": "212", "clustering-method": "HDBSCAN", "label": "talk.politics.guns", "information": {}}, {"name": "228", "clustering-method": "HDBSCAN", "label": "talk.politics.guns", "information": {}}, {"name": "673", "clustering-method": "HDBSCAN", "label": "talk.politics.guns", "information": {}}, {"name": "867", "clustering-method": "HDBSCAN", "label": "talk.politics.guns", "information": {}}, {"name": "950", "clustering-method": "HDBSCAN", "label": "talk.politics.guns", "information": {}}], "clustering-method": "HDBSCAN", "cluster_size": null}, {"name": "5", "cluster-information": {"#data": 6, "node-type": "branch", "frequent_labels": [["soc.religion.christian", 6]]}, "_children": [{"name": "210", "clustering-method": "HDBSCAN", "label": "soc.religion.christian", "information": {}}, {"name": "221", "clustering-method": "HDBSCAN", "label": "soc.religion.christian", "information": {}}, {"name": "468", "clustering-method": "HDBSCAN", "label": "soc.religion.christian", "information": {}}, {"name": "614", "clustering-method": "HDBSCAN", "label": "soc.religion.christian", "information": {}}, {"name": "715", "clustering-method": "HDBSCAN", "label": "soc.religion.christian", "information": {}}, {"name": "718", "clustering-method": "HDBSCAN", "label": "soc.religion.christian", "information": {}}], "clustering-method": "HDBSCAN", "cluster_size": null}, {"name": "6", "cluster-information": {"#data": 5, "node-type": "branch", "frequent_labels": [["sci.crypt", 5]]}, "_children": [{"name": "37", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "213", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "245", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "279", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}, {"name": "582", "clustering-method": "HDBSCAN", "label": "sci.crypt", "information": {}}], "clustering-method": "HDBSCAN", "cluster_size": null}, {"name": "7", "cluster-information": {"#data": 25, "node-type": "branch", "frequent_labels": [["rec.autos", 9], ["alt.atheism", 3], ["comp.graphics", 2]]}, "_children": [{"name": "16", "cluster-information": {"#data": 5, "node-type": "branch", "frequent_labels": [["rec.autos", 2], ["rec.sport.baseball", 1], ["sci.electronics", 1]]}, "_children": [{"name": "40", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "71", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "230", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "695", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "757", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "17", "cluster-information": {"#data": 1, "node-type": "branch", "frequent_labels": [["alt.atheism", 1]]}, "_children": [{"name": "734", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "18", "cluster-information": {"#data": 2, "node-type": "branch", "frequent_labels": [["rec.autos", 1], ["sci.med", 1]]}, "_children": [{"name": "145", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "621", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "19", "cluster-information": {"#data": 1, "node-type": "branch", "frequent_labels": [["rec.motorcycles", 1]]}, "_children": [{"name": "528", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "20", "cluster-information": {"#data": 16, "node-type": "branch", "frequent_labels": [["rec.autos", 6], ["comp.graphics", 2], ["alt.atheism", 2]]}, "_children": [{"name": "3", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "99", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "178", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "201", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "216", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "286", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "313", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "370", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "415", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "459", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "462", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "648", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "827", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "833", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "904", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "987", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}], "clustering-method": "HDBSCAN", "cluster_size": null}, {"name": "8", "cluster-information": {"#data": 7, "node-type": "branch", "frequent_labels": [["sci.electronics", 3], ["rec.autos", 2], ["sci.space", 1]]}, "_children": [{"name": "92", "clustering-method": "HDBSCAN", "label": "sci.electronics", "information": {}}, {"name": "379", "clustering-method": "HDBSCAN", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "520", "clustering-method": "HDBSCAN", "label": "sci.electronics", "information": {}}, {"name": "686", "clustering-method": "HDBSCAN", "label": "sci.electronics", "information": {}}, {"name": "730", "clustering-method": "HDBSCAN", "label": "rec.autos", "information": {}}, {"name": "945", "clustering-method": "HDBSCAN", "label": "sci.space", "information": {}}, {"name": "958", "clustering-method": "HDBSCAN", "label": "rec.autos", "information": {}}], "clustering-method": "HDBSCAN", "cluster_size": null}, {"name": "9", "cluster-information": {"#data": 7, "node-type": "branch", "frequent_labels": [["talk.religion.misc", 5], ["alt.atheism", 2]]}, "_children": [{"name": "390", "clustering-method": "HDBSCAN", "label": "talk.religion.misc", "information": {}}, {"name": "408", "clustering-method": "HDBSCAN", "label": "talk.religion.misc", "information": {}}, {"name": "615", "clustering-method": "HDBSCAN", "label": "talk.religion.misc", "information": {}}, {"name": "716", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "784", "clustering-method": "HDBSCAN", "label": "alt.atheism", "information": {}}, {"name": "787", "clustering-method": "HDBSCAN", "label": "talk.religion.misc", "information": {}}, {"name": "811", "clustering-method": "HDBSCAN", "label": "talk.religion.misc", "information": {}}], "clustering-method": "HDBSCAN", "cluster_size": null}, {"name": "10", "cluster-information": {"#data": 905, "node-type": "branch", "frequent_labels": [["comp.sys.mac.hardware", 58], ["soc.religion.christian", 57], ["rec.sport.baseball", 54]]}, "_children": [{"name": "21", "cluster-information": {"#data": 287, "node-type": "branch", "frequent_labels": [["talk.politics.mideast", 25], ["rec.autos", 21], ["talk.politics.misc", 21]]}, "_children": [{"name": "0", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "1", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "8", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "9", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "11", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "17", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "26", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "29", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "30", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "34", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "38", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "41", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "42", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "47", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "49", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "54", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "56", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "63", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "65", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "66", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "67", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "75", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "76", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "78", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "79", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "81", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "85", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "91", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "93", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "94", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "95", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "96", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "97", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "101", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "109", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "110", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "114", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "118", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "122", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "126", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "127", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "128", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "133", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "138", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "142", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "146", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "155", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "156", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "157", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "164", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "165", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "168", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "170", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "172", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "181", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "188", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "189", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "190", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "192", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "194", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "196", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "200", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "205", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "206", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "207", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "208", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "219", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "226", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "232", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "233", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "235", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "236", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "246", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "251", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "252", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "253", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "254", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "258", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "262", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "264", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "269", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "272", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "274", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "276", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "278", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "281", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "284", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "293", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "294", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "297", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "304", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "310", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "316", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "322", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "323", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "332", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "340", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "347", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "359", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "361", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "362", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "363", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "366", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "369", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "371", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "373", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "376", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "378", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "382", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "383", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "389", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "393", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "394", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "404", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "405", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "411", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "412", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "416", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "417", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "420", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "422", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "427", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "428", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "440", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "443", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "452", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "457", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "461", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "463", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "464", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "465", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "466", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "472", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "473", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "475", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "476", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "477", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "478", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "483", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "489", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "492", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "493", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "494", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "501", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "502", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "503", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "505", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "512", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "514", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "515", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "516", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "521", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "522", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "527", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "529", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "531", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "532", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "534", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "537", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "539", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "540", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "545", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "549", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "550", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "557", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "563", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "564", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "565", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "571", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "573", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "574", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "589", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "590", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "592", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "593", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "598", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "600", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "602", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "606", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "607", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "610", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "622", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "630", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "635", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "639", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "641", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "642", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "649", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "650", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "651", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "658", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "659", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "662", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "663", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "665", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "666", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "668", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "669", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "679", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "681", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "682", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "683", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "684", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "687", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "688", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "693", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "699", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "700", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "703", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "705", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "710", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "712", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "717", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "728", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "729", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "735", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "738", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "740", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "741", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "748", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "756", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "764", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "772", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "773", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "774", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "776", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "780", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "781", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "782", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "786", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "788", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "790", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "792", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "793", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "802", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "806", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "812", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "813", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "816", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "818", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "832", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "834", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "835", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "839", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "845", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "854", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "855", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "856", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "857", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "858", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "863", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "866", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "876", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "878", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "880", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "890", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "893", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "894", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "896", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "898", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "900", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "909", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "910", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "914", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "915", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "919", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "921", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "925", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "926", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "928", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "937", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "938", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "939", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "941", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "951", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "956", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "957", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "963", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "964", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "965", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "972", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "973", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "974", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "979", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "980", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "996", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "998", "clustering-method": "KMeans", "label": "sci.med", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "22", "cluster-information": {"#data": 122, "node-type": "branch", "frequent_labels": [["misc.forsale", 18], ["comp.sys.mac.hardware", 18], ["sci.electronics", 13]]}, "_children": [{"name": "18", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "22", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "23", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "25", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "46", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "48", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "59", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "60", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "62", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "89", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "90", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "100", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "106", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "112", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "117", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "130", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "141", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "150", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "153", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "167", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "173", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "176", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "184", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "185", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "199", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "229", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "231", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "239", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "242", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "270", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "271", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "273", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "277", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "283", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "285", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "289", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "290", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "291", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "306", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "314", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "339", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "344", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "346", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "348", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "380", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "386", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "392", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "395", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "407", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "409", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "414", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "429", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "430", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "438", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "439", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "470", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "471", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "498", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "506", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "511", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "517", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "518", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "525", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "530", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "538", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "544", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "555", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "562", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "568", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "576", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "578", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "583", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "588", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "594", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "605", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "613", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "632", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "640", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "655", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "661", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "676", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "680", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "709", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "726", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "731", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "732", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "746", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "752", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "765", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "770", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "779", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "785", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "789", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "796", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "804", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "825", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "830", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "837", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "838", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "843", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "853", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "859", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "862", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "868", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "871", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "873", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "882", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "897", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "902", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "908", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "918", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "920", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "927", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "933", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "942", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "949", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "953", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "959", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "969", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "977", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "986", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "992", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "23", "cluster-information": {"#data": 209, "node-type": "branch", "frequent_labels": [["soc.religion.christian", 20], ["sci.space", 19], ["rec.motorcycles", 19]]}, "_children": [{"name": "26", "cluster-information": {"#data": 5, "node-type": "branch", "frequent_labels": [["soc.religion.christian", 2], ["alt.atheism", 1], ["comp.sys.mac.hardware", 1]]}, "_children": [{"name": "374", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "455", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "495", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "801", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "889", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "27", "cluster-information": {"#data": 5, "node-type": "branch", "frequent_labels": [["rec.autos", 2], ["soc.religion.christian", 2], ["comp.sys.mac.hardware", 1]]}, "_children": [{"name": "77", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "159", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "368", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "460", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "771", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "28", "cluster-information": {"#data": 199, "node-type": "branch", "frequent_labels": [["sci.space", 19], ["rec.motorcycles", 19], ["sci.med", 18]]}, "_children": [{"name": "4", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "5", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "10", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "13", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "16", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "20", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "35", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "45", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "51", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "53", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "58", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "61", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "64", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "72", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "73", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "83", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "84", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "88", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "98", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "102", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "105", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "107", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "111", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "113", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "115", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "116", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "121", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "125", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "129", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "134", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "135", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "139", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "143", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "147", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "148", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "149", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "154", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "158", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "162", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "171", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "174", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "177", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "180", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "182", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "183", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "186", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "198", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "209", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "218", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "220", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "238", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "247", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "248", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "255", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "256", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "261", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "268", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "275", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "282", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "292", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "300", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "303", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "307", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "308", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "318", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "325", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "328", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "329", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "334", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "337", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "341", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "349", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "351", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "353", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "357", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "358", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "364", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "365", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "381", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "385", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "387", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "391", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "398", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "402", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "403", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "410", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "418", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "421", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "437", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "445", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "446", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "450", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "451", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "454", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "456", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "458", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "467", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "474", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "481", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "482", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "484", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "487", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "500", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "507", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "508", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "510", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "519", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "524", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "526", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "535", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "556", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "558", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "560", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "561", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "569", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "577", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "581", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "584", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "585", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "595", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "597", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "599", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "601", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "603", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "611", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "617", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "618", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "619", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "623", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "625", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "626", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "628", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "631", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "644", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "646", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "657", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "660", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "664", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "667", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "670", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "685", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "689", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "698", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "701", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "707", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "714", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "722", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "723", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "725", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "739", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "758", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "759", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "760", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "761", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "763", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "766", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "767", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "768", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "783", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "795", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "803", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "805", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "807", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "809", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "810", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "815", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "819", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "824", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "826", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "829", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "836", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "844", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "847", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "850", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "851", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "852", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "861", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "865", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "875", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "877", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "881", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "891", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "899", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "906", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "911", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "943", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "946", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "948", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "962", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "967", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "968", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "982", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "984", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "988", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "989", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "990", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "991", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "993", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "997", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "24", "cluster-information": {"#data": 126, "node-type": "branch", "frequent_labels": [["misc.forsale", 24], ["comp.windows.x", 14], ["comp.os.ms-windows.misc", 11]]}, "_children": [{"name": "2", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "6", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "19", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "31", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "43", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "50", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "52", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "69", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "74", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "132", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "137", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "140", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "144", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "151", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "166", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "169", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "175", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "191", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "195", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "211", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "214", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "224", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "243", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "249", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "250", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "257", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "259", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "265", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "280", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "298", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "302", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "305", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "320", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "321", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "324", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "326", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "327", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "338", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "342", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "356", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "360", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "372", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "375", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "388", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "397", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "399", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "419", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "425", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "431", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "432", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "435", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "447", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "453", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "485", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "486", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "491", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "497", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "499", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "504", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "513", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "523", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "533", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "541", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "542", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "543", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "547", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "548", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "553", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "567", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "579", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "596", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "609", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "616", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "624", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "636", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "638", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "654", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "672", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "674", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "675", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "677", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "678", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "694", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "704", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "706", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "708", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "720", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "737", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "743", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "744", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "749", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "750", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "751", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "769", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "778", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "794", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "800", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "808", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "822", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "823", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "840", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "841", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "846", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "848", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "849", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "870", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "874", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "879", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "884", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "886", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "895", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "903", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "913", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "922", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "929", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "930", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "940", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "952", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "954", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "966", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "970", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "971", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "975", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "978", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "985", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "995", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}, {"name": "25", "cluster-information": {"#data": 161, "node-type": "branch", "frequent_labels": [["soc.religion.christian", 22], ["rec.sport.baseball", 21], ["talk.politics.mideast", 18]]}, "_children": [{"name": "7", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "14", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "21", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "24", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "27", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "28", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "32", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "33", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "36", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "44", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "55", "clustering-method": "KMeans", "label": "sci.crypt", "information": {}}, {"name": "57", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "68", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "70", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "80", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "86", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "87", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "103", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "104", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "108", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "119", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "120", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "123", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "124", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "131", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "136", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "152", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "160", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "163", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "179", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "187", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "193", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "197", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "202", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "203", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "215", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "217", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "225", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "227", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "234", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "240", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "241", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "260", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "263", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "266", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "267", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "287", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "295", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "296", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "299", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "309", "clustering-method": "KMeans", "label": "comp.sys.mac.hardware", "information": {}}, {"name": "311", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "312", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "315", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "319", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "330", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "331", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "333", "clustering-method": "KMeans", "label": "comp.os.ms-windows.misc", "information": {}}, {"name": "335", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "343", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "345", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "350", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "352", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "354", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "355", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "367", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "377", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "384", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "401", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "406", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "413", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "423", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "434", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "436", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "441", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "442", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "444", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "449", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "469", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "479", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "488", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "490", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "496", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "509", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "536", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "546", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "551", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "552", "clustering-method": "KMeans", "label": "comp.graphics", "information": {}}, {"name": "554", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "559", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "566", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "570", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "572", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "575", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "586", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "587", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "591", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "604", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "608", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "612", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "620", "clustering-method": "KMeans", "label": "misc.forsale", "information": {}}, {"name": "627", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "629", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "633", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "634", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "637", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "643", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "647", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "652", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "653", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "671", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "691", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "692", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "696", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "713", "clustering-method": "KMeans", "label": "comp.windows.x", "information": {}}, {"name": "721", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "724", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "727", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "733", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "736", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "742", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "745", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "753", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "754", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "762", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "775", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "777", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "797", "clustering-method": "KMeans", "label": "talk.politics.misc", "information": {}}, {"name": "798", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "799", "clustering-method": "KMeans", "label": "sci.space", "information": {}}, {"name": "814", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "817", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "821", "clustering-method": "KMeans", "label": "rec.motorcycles", "information": {}}, {"name": "831", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "842", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "860", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "864", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "869", "clustering-method": "KMeans", "label": "sci.med", "information": {}}, {"name": "872", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "885", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "892", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "905", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "907", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "912", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "916", "clustering-method": "KMeans", "label": "alt.atheism", "information": {}}, {"name": "917", "clustering-method": "KMeans", "label": "comp.sys.ibm.pc.hardware", "information": {}}, {"name": "923", "clustering-method": "KMeans", "label": "rec.sport.baseball", "information": {}}, {"name": "924", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "932", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "934", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "935", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "936", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "944", "clustering-method": "KMeans", "label": "sci.electronics", "information": {}}, {"name": "947", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}, {"name": "960", "clustering-method": "KMeans", "label": "rec.autos", "information": {}}, {"name": "961", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "976", "clustering-method": "KMeans", "label": "talk.politics.guns", "information": {}}, {"name": "981", "clustering-method": "KMeans", "label": "talk.politics.mideast", "information": {}}, {"name": "983", "clustering-method": "KMeans", "label": "talk.religion.misc", "information": {}}, {"name": "994", "clustering-method": "KMeans", "label": "rec.sport.hockey", "information": {}}, {"name": "999", "clustering-method": "KMeans", "label": "soc.religion.christian", "information": {}}], "clustering-method": "KMeans", "cluster_size": null}], "clustering-method": "HDBSCAN", "cluster_size": null}], "cluster_size": 30};
+    return data;
+  }
+</script>
+    </div>
+
+</body>
+
+</html>
