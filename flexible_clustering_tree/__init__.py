@@ -1,0 +1,3 @@
+from flexible_clustering_tree.models import FeatureMatrixObject, MultiFeatureMatrixObject
+from flexible_clustering_tree.models import ClusteringOperator, MultiClusteringOperator
+from flexible_clustering_tree.interface import RecursiveClustering, FlexibleClustering
