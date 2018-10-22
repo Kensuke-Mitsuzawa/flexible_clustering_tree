@@ -1,0 +1,5 @@
+include README.md
+include LICENSE
+recursive-exclude examples *
+recursive-include tests *
+recursive-include flexible_clustering_tree *

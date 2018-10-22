@@ -86,7 +86,13 @@ You could see examples at `/examples`.
 
 # setup
 
+```bash
+pip install flexible_clustering_tree
 ```
+
+or close this repository 
+
+```bash
 python setup.py install
 ```
 
