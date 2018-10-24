@@ -1,6 +1,8 @@
 language: python
 python:
-  - 3.5
+  - "3.5"
+  - "3.6"
+  - "3.7-dev"
 addons:
   apt:
     packages:
@@ -39,7 +41,7 @@ install:
   - conda install numpy scipy scikit-learn Cython
   - python --version
   - python setup.py install
-  - pip install coveralls coverage nose
+  - pip install coveralls coverage nose pypandoc
 script:
   - python setup.py test
 after_success:

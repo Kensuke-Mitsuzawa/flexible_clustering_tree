@@ -34,7 +34,9 @@ try:
     import pypandoc
     long_description = pypandoc.convert('README.md', 'rst')
 except(IOError, ImportError):
+    import codecs
     long_description = codecs.open('README.md', 'r', 'utf-8').read()
+
 
 classifiers = [
         "Development Status :: 5 - Production/Stable",
