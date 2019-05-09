@@ -2,9 +2,10 @@
 
 from setuptools import setup, find_packages
 import unittest
+import codecs
 
 name = 'flexible_clustering_tree'
-version = '0.11'
+version = '0.12'
 description='easy interface for ensemble clustering'
 author = 'Kensuke Mitsuzawa'
 author_email = 'kensuke.mit@gmail.com'
@@ -33,8 +34,7 @@ def my_test_suite():
 try:
     import pypandoc
     long_description = pypandoc.convert('README.md', 'rst')
-except(IOError, ImportError):
-    import codecs
+except (IOError, ImportError):
     long_description = codecs.open('README.md', 'r', 'utf-8').read()
 
 
