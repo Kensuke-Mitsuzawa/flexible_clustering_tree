@@ -80,6 +80,10 @@ class TestBaseClustering(unittest.TestCase):
         # test generating html file
         html_file = tree_object.to_html()
         self.assertTrue(isinstance(html_file, str))
+        converted_obj = tree_object.to_objects()
+        self.assertTrue(isinstance(converted_obj, dict))
+        self.assertTrue('cluster_information' in converted_obj)
+        self.assertTrue('leaf_information' in converted_obj)
 
 
 if __name__ == '__main__':

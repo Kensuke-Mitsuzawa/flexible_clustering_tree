@@ -1,0 +1,9 @@
+sqlitedict
+scipy
+numpy
+scikit-learn
+hdbscan
+pyexcelerate
+jinja2
+pypandoc
+dataclasses

@@ -9,6 +9,7 @@ from jinja2 import Environment, BaseLoader
 from itertools import groupby
 from collections import Counter
 from flexible_clustering_tree.logger import logger
+from copy import deepcopy
 import pkgutil
 import json
 
@@ -199,11 +200,12 @@ class ClusterTreeObject(object):
         self.multi_matrix_object = multi_matrix_object
         self.dict_child_id2parent_id = dict_child_id2parent_id
         self.dict_depth2clustering_result = dict_depth2clustering_result
-        self.dict_parent_cluster_id2children_cluster_id = self.__generate_parent2children()
-        self.dict_cluster_id2cluster_obj = self.__generate_cluster_id2cluster_obj()
+        self.dict_parent_cluster_id2children_cluster_id = \
+            self.__generate_parent2children()  # type: Dict[int, List[int]]
+        self.dict_cluster_id2cluster_obj = self.__generate_cluster_id2cluster_obj()  # type: Dict[int, ClusterObject]
 
-        self.dict_cluster_id2cluster_agg_info = self.aggregate_node_information()
-        self.updated_dict_child2parent = self.reshape_tree()
+        self.dict_cluster_id2cluster_agg_info = self.aggregate_node_information()  # type: Dict[int, Dict[str, Any]]
+        self.updated_dict_child2parent = self.reshape_tree()  # type: Dict[int, int]
 
     def child_cluster_id2parent_cluster_id(self, child_cluster_id: int)->Union[int, bool]:
         """it returns parent-cluster-id
@@ -211,7 +213,7 @@ class ClusterTreeObject(object):
         return self.dict_child_id2parent_id[child_cluster_id] \
             if child_cluster_id in self.dict_child_id2parent_id else False
 
-    def __generate_parent2children(self)->Dict[int, List[int]]:
+    def __generate_parent2children(self) -> Dict[int, List[int]]:
         """it makes relationship parent-cluster-id: child-cluster-id
 
         :return: {parent-cluster-id: [child-cluster-id]}
@@ -225,7 +227,7 @@ class ClusterTreeObject(object):
         else:
             return d_parent_cluster_node2children
 
-    def __generate_cluster_id2cluster_obj(self)->Dict[int, ClusterObject]:
+    def __generate_cluster_id2cluster_obj(self) -> Dict[int, ClusterObject]:
         """it makes relationship of cluster-id: cluster-obj
 
         :return: {cluster-node-id: cluster-object}
@@ -308,7 +310,7 @@ class ClusterTreeObject(object):
     # ---------------------------------------------------------------------------------------------------------
     # method to clean up a tree #
 
-    def reshape_tree(self)->Dict[int, int]:
+    def reshape_tree(self) -> Dict[int, int]:
         """Delete a cluster-node whose #child-cluster-node is only 1,
         and put the child-cluster-node into a parent cluster node.
         """
@@ -478,3 +480,49 @@ class ClusterTreeObject(object):
 
         html = tpl.render(dict_render_values)
         return html
+
+    def to_objects(self) -> Dict[str, Dict[str, Any]]:
+        """Generates dict object which has 2 types of information. 'cluster_information' is relation of parent-child.
+        'leaf_information' is object of leaf nodes.
+
+        :return: {"cluster_information": [], "leaf_information": []}
+        """
+        dict_d3_object = self.to_dict()
+        __ = {"cluster_information": {}, "leaf_information": {}}
+        _cluster_relation_table_obj = {'cluster_id': None,
+                                       'parent_id': None,
+                                       'depth_level': None,
+                                       'clustering_method': None}
+        __cluster_relation_table_rows = []
+        for child_cid, parent_cid in self.dict_child_id2parent_id.items():
+            c_obj = self.dict_cluster_id2cluster_obj[child_cid]
+            __relation_table_obj = deepcopy(_cluster_relation_table_obj)
+            __relation_table_obj['cluster_id'] = child_cid
+            __relation_table_obj['parent_id'] = parent_cid
+            __relation_table_obj['depth_level'] = c_obj.matrix_depth_level
+            __relation_table_obj['clustering_method'] = c_obj.clustering_label
+            __cluster_relation_table_rows.append(__relation_table_obj)
+        else:
+            pass
+
+        __node_table_rows = []
+        _node_table_obj = {'leaf_id': None, 'cluster_id': None, 'label': None, 'args': None}
+        d_id2c_id = {d_id: c_obj.cluster_id
+                     for c_obj in self.dict_cluster_id2cluster_obj.values()
+                     for d_id in c_obj.data_ids}
+        for data_id, label in self.multi_matrix_object.dict_index2label.items():
+            __leaf_object = None if self.multi_matrix_object.dict_index2attributes is None \
+                else json.dumps(self.multi_matrix_object.dict_index2attributes[data_id], ensure_ascii=False)
+            __node_table_obj = deepcopy(_node_table_obj)
+            __node_table_obj['leaf_id'] = data_id
+            __node_table_obj['cluster_id'] = d_id2c_id[data_id]
+            __node_table_obj['label'] = self.multi_matrix_object.dict_index2label[data_id]
+            __node_table_obj['args'] = __leaf_object
+            __node_table_rows.append(__node_table_obj)
+        else:
+            pass
+
+        __['cluster_information'] = __cluster_relation_table_rows
+        __['leaf_information'] = __node_table_rows
+
+        return __

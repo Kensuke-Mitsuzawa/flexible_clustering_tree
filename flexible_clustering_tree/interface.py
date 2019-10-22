@@ -48,7 +48,7 @@ class FlexibleClustering(BaseEstimator):
         self.is_auto_switch = is_auto_switch
         self.threshold_ratio_auto_switch = threshold_ratio_auto_switch
         self.threshold_minimum_unique_vector = threshold_minimum_unique_vector
-        self.clustering_tree = None
+        self.clustering_tree = None  # type: ClusterTreeObject
 
     def fit(self,
             x: MultiFeatureMatrixObject,

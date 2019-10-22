@@ -246,7 +246,7 @@ class RecursiveClustering(object):
     def generate_sub_clusters(self,
                               clustering_operator: ClusteringOperator,
                               this_level: List[Tuple[int, ClusterObject]]
-                              )->Dict[int, TempNodeInfo]:
+                              ) -> Dict[int, TempNodeInfo]:
         """It starts recursive-clustering.
 
         :param clustering_operator
@@ -332,7 +332,7 @@ class RecursiveClustering(object):
     def post_process_clustering(self,
                                 dict_local_clustering_result: Dict[int, TempNodeInfo],
                                 multi_feature_object: MultiFeatureMatrixObject,
-                                multi_clustering_operator: MultiClusteringOperator)->List[Tuple[int, ClusterObject]]:
+                                multi_clustering_operator: MultiClusteringOperator) -> List[Tuple[int, ClusterObject]]:
         """runs post-process after clustering. This method is called in each layer of a tree.
 
         :param dict_local_clustering_result: output of self.generate_sub_clusters()
@@ -452,7 +452,7 @@ class RecursiveClustering(object):
                                  is_auto_switch: bool = True,
                                  threshold_ratio_auto_switch: float = 10.0,
                                  threshold_minimum_unique_vector: int = 10,
-                                 initial_cluster_id: int = 0)->ClusterTreeObject:
+                                 initial_cluster_id: int = 0) -> ClusterTreeObject:
         """It runs clustering recursively. To process each node in a tree, it runs with BFS(Breadth First Search) way
 
         :param multi_clustering_operator:
