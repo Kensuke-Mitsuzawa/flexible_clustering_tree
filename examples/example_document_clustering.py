@@ -109,3 +109,9 @@ html = clustering_runner.clustering_tree.to_html()
 
 with codecs.open("20news_example.html", "w", "utf-8") as f:
     f.write(html)
+
+# generate objects for table
+table_objects = clustering_runner.clustering_tree.to_objects()
+import pandas
+print(pandas.DataFrame(table_objects['cluster_information']))
+print(pandas.DataFrame(table_objects['leaf_information']))

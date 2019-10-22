@@ -70,3 +70,9 @@ index2cluster_id = flexible_clustering_runner.fit_transform(x=multi_f_obj, multi
 # generate html page with collapsible tree
 with codecs.open("animal_example.html", "w") as f:
     f.write(flexible_clustering_runner.clustering_tree.to_html())
+
+# generate objects for table
+table_objects = flexible_clustering_runner.clustering_tree.to_objects()
+import pandas
+print(pandas.DataFrame(table_objects['cluster_information']))
+print(pandas.DataFrame(table_objects['leaf_information']))
