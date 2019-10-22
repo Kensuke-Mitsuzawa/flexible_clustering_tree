@@ -39,14 +39,14 @@ except (IOError, ImportError):
 
 
 classifiers = [
-        "Development Status :: 5 - Production/Stable",
-        "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python",
-        "Natural Language :: Japanese",
-        "Topic :: Scientific/Engineering :: Artificial Intelligence",
-        "Programming Language :: Python :: 2.7",
-        "Programming Language :: Python :: 3.5"
-        ]
+    "Development Status :: 5 - Production/Stable",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Natural Language :: Japanese",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 2.7",
+    "Programming Language :: Python :: 3.5"
+]
 
 setup(
     name=name,
@@ -57,8 +57,8 @@ setup(
     dependency_links=dependency_links,
     author_email=author_email,
     long_description=long_description,
+    long_description_content_type='text/markdown',
     url=url,
-    license=license_name,
     packages=find_packages(),
     test_suite='setup.my_test_suite',
     include_package_data=True,
