@@ -15,14 +15,19 @@ import json
 
 
 class FeatureMatrixObject(object):
-    __slots__ = ('level', 'matrix_object')
+    __slots__ = ('level', 'matrix_object', 'feature_strings')
 
     def __init__(self,
                  level: int,
-                 matrix_object: Union[ndarray, csr_matrix]):
+                 matrix_object: Union[ndarray, csr_matrix],
+                 feature_strings: List[str] = None):
         assert isinstance(matrix_object, (csr_matrix, ndarray))
         self.level = level
         self.matrix_object = matrix_object
+        self.feature_strings = feature_strings
+
+        if feature_strings is not None:
+            assert len(feature_strings) == len(matrix_object)
 
     def get_index_size(self)->int:
         return self.matrix_object.shape[0]
