@@ -5,7 +5,7 @@ import unittest
 import codecs
 
 name = 'flexible_clustering_tree'
-version = '0.13'
+version = '0.14'
 description='easy interface for ensemble clustering'
 author = 'Kensuke Mitsuzawa'
 author_email = 'kensuke.mit@gmail.com'
