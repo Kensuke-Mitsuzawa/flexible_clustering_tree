@@ -15,30 +15,45 @@ import json
 
 
 class FeatureMatrixObject(object):
-    __slots__ = ('level', 'matrix_object', 'feature_strings')
+    __slots__ = ('level', 'matrix_object', 'feature_strings', 'feature_object')
 
     def __init__(self,
                  level: int,
-                 matrix_object: Union[ndarray, csr_matrix],
+                 matrix_object: Union[ndarray, csr_matrix] = None,
                  feature_strings: List[str] = None):
-        assert isinstance(matrix_object, (csr_matrix, ndarray))
         self.level = level
         self.matrix_object = matrix_object
         self.feature_strings = feature_strings
-
-        if feature_strings is not None:
+        if matrix_object is None and feature_strings is None:
+            raise Exception('either of matrix_object or feature_strings should be given')
+        elif matrix_object is None:
+            self.feature_object = feature_strings
+        elif feature_strings is None:
+            assert isinstance(matrix_object, (csr_matrix, ndarray))
+            self.feature_object = matrix_object
+        elif matrix_object is not None and feature_strings is not None:
             assert len(feature_strings) == len(matrix_object)
 
     def get_index_size(self)->int:
-        return self.matrix_object.shape[0]
+        if isinstance(self.feature_object, list):
+            return len(self.feature_object)
+        elif isinstance(self.feature_object, ndarray):
+            return self.feature_object.shape[0]
+        else:
+            raise Exception()
 
     def __str__(self):
-        return "@level={} matrix object with {}*{}".format(self.level, *self.matrix_object.shape)
+        __feature_type = type(self.feature_object)
+        __ = "@level={} feature-type={}".format(self.level, __feature_type)
+        if self.matrix_object is not None:
+            __ += " matrix object with {} * {}".format(self.level, *self.matrix_object.shape)
+
+        return __
 
 
 class MultiFeatureMatrixObject(object):
     """Class for 1-input of recursive-clustering"""
-    __slots__ = ("dict_level2matrix_obj", "dict_index2label", "dict_index2attributes", "matrix_first_layer")
+    __slots__ = ("dict_level2feature_obj", "dict_index2label", "dict_index2attributes", "matrix_first_layer")
 
     def __init__(self,
                  matrix_objects: List[FeatureMatrixObject],
@@ -60,7 +75,7 @@ class MultiFeatureMatrixObject(object):
                 set(matrix_index_sizes)))
         self.__check_match_index_size(matrix_index_sizes, dict_index2label)
 
-        self.dict_level2matrix_obj = {m_obj.level: m_obj.matrix_object for m_obj in matrix_objects}
+        self.dict_level2feature_obj = {m_obj.level: m_obj.feature_object for m_obj in matrix_objects}
         self.dict_index2label = dict_index2label
         self.dict_index2attributes = dict_index2attributes
 
@@ -79,7 +94,7 @@ class MultiFeatureMatrixObject(object):
                 raise Exception("label for index={} is not defined.".format(i))
 
     def __str__(self):
-        return "#level={} #data-point={}".format(len(self.dict_level2matrix_obj), len(self.dict_index2label))
+        return "#level={} #data-point={}".format(len(self.dict_level2feature_obj), len(self.dict_index2label))
 
 
 class ClusteringOperator(object):
@@ -126,14 +141,14 @@ class MultiClusteringOperator(object):
 
     def get_clustering_instance(self, level: int):
         """It returns an instance which works clustering.
-        If the given level is not in set, it returns an instance in level=0
+        If the given level is not in set, it returns the last instance.
 
         :param level: level of depth
         """
         if level in self.dict_level2operator:
             return self.dict_level2operator[level]
         else:
-            return self.dict_level2operator[0]
+            return self.dict_level2operator[max(self.dict_level2operator.keys())]
 
     def get_default_clustering_algorithm(self)->ClusteringOperator:
         """it sets default clustering algorithm when level is not defined.
@@ -151,6 +166,7 @@ class ClusterObject(object):
     """Class for saving one-node of a tree"""
     __types__ = ('cluster_id', 'parent_cluster_id', 'data_ids',
                  'average_vector', 'child_cluster_ids', 'feature_matrix', 'matrix_depth_level',
+                 'feature_type', 'feature_object',
                  'dict_submatrix_index2original_matrix_index', 'clustering_label')
 
     def __init__(self,
@@ -160,9 +176,10 @@ class ClusterObject(object):
                  data_ids: List[int],
                  matrix_depth_level: int=None,
                  child_cluster_ids: List[int]=None,
-                 feature_matrix: ndarray=None,
+                 feature_object: Union[List[str], ndarray] = None,
                  clustering_label: str=None,
-                 dict_submatrix_index2original_matrix_index: Dict[int, int] = None):
+                 dict_submatrix_index2original_matrix_index: Dict[int, int] = None,
+                 feature_matrix: ndarray = None,):
         """
 
         :param cluster_id: id of this cluster node
@@ -175,6 +192,14 @@ class ClusterObject(object):
         :param clustering_label: name of clustering algorithm which is used to generate this node
         :param dict_submatrix_index2original_matrix_index:
         """
+        if isinstance(feature_object, ndarray):
+            self.feature_matrix = feature_object
+            self.feature_type = ndarray
+        elif isinstance(feature_object, list) and all([isinstance(_, str) for _ in feature_object]):
+            self.feature_type = str
+        else:
+            raise Exception('Unexpected error. feature object expects either of str or ndarray.')
+
         self.cluster_id = cluster_id
         self.parent_cluster_id = parent_cluster_id
         self.data_ids = data_ids
@@ -184,9 +209,15 @@ class ClusterObject(object):
         self.matrix_depth_level = matrix_depth_level
         self.dict_submatrix_index2original_matrix_index = dict_submatrix_index2original_matrix_index
         self.clustering_label = clustering_label
+        self.feature_object = feature_object
 
     def __str__(self):
-        return "cluster-id={} with {}*{} matrix".format(self.cluster_id, *self.feature_matrix.shape)
+        __ = "cluster-id={} feature-type={}".format(self.cluster_id, self.feature_type)
+        if isinstance(self.feature_type, ndarray):
+            __ += " with {} * {} matrix".format(*self.feature_matrix.shape)
+        else:
+            pass
+        return  __
 
 
 class ClusterTreeObject(object):
