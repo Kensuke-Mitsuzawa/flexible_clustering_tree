@@ -112,3 +112,4 @@ dmypy.json
 
 .idea/
 python_env/
+.DS_Store

@@ -1,8 +1,8 @@
 #! -*- coding: utf-8 -*-
 from sklearn.base import BaseEstimator, ClusterMixin
-from flexible_clustering_tree.models import FeatureMatrixObject
 from itertools import groupby
 import numpy
+from typing import List
 
 
 class StringAggregation(BaseEstimator, ClusterMixin):
@@ -10,9 +10,14 @@ class StringAggregation(BaseEstimator, ClusterMixin):
     def __init__(self):
         pass
 
-    def fit(self, X: FeatureMatrixObject):
+    def fit(self, X: List[str]):
         """run aggregation by string"""
-        __t_d_id2str = [(d_id, __str) for d_id, __str in enumerate(X.feature_strings)]
+        if not isinstance(X, list):
+            raise Exception(
+                'StringAggregation has not list object. This class expects str of list object, but {} is given.'
+                    .format(type(X)))
+
+        __t_d_id2str = [(d_id, __str) for d_id, __str in enumerate(X)]
         labels_ = []
         c_id = 0
         for __str, g_obj in groupby(sorted(__t_d_id2str, key=lambda t: t[1]), key=lambda t: t[1]):
@@ -23,7 +28,7 @@ class StringAggregation(BaseEstimator, ClusterMixin):
 
         return self
 
-    def fit_predict(self, X: FeatureMatrixObject, y=None):
+    def fit_predict(self, X: List[str], y=None):
         self.fit(X)
         return self.labels_
 
@@ -33,14 +38,16 @@ class StringAggregation(BaseEstimator, ClusterMixin):
     def set_params(self, **params):
         pass
 
+    def __str__(self):
+        return 'StringAggregation'
+
 
 def test():
     matrix_obj_input = numpy.random.rand(100, 128)
     string_inputs = ['d'] * 10 + ['e'] * 10 + ['c'] * 10 + ['a'] * 10 + ['b'] * 10 + ['f'] * 50
-    matrix_obj_1st = FeatureMatrixObject(level=0, matrix_object=matrix_obj_input, feature_strings=string_inputs)
     aggregation_obj = StringAggregation()
-    aggregation_obj.fit(matrix_obj_1st)
-    labels = aggregation_obj.fit_predict(matrix_obj_1st)
+    aggregation_obj.fit(string_inputs)
+    labels = aggregation_obj.fit_predict(string_inputs)
     assert len(labels) == len(string_inputs)
 
 

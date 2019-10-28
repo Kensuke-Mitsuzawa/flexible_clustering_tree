@@ -175,18 +175,21 @@ class RecursiveClustering(object):
     ###########################################################################################
 
     @staticmethod
-    def generate_subset_matrix(feature_matrix: Union[csr_matrix, ndarray],
+    def generate_subset_matrix(feature_object: Union[csr_matrix, ndarray, List[str]],
                                seq_index_subset_matrix: List[int])->Tuple[Union[ndarray], Dict[int, int]]:
         """It generates sub-matrix from the original given matrix.
         """
         seq_stack_vector = [None] * len(seq_index_subset_matrix)
         matrix_type = None
         for i, sub_matrix_index in enumerate(seq_index_subset_matrix):
-            if isinstance(feature_matrix, csr_matrix):
-                seq_stack_vector[i] = feature_matrix.getrow(sub_matrix_index).toarray()
+            if isinstance(feature_object, list) and all([isinstance(_, str) for _ in feature_object]):
+                matrix_type = 'list'
+                seq_stack_vector[i] = feature_object[sub_matrix_index]
+            elif isinstance(feature_object, csr_matrix):
+                seq_stack_vector[i] = feature_object.getrow(sub_matrix_index).toarray()
                 matrix_type = 'csr_matrix'
-            elif isinstance(feature_matrix, ndarray):
-                seq_stack_vector[i] = feature_matrix[sub_matrix_index]
+            elif isinstance(feature_object, ndarray):
+                seq_stack_vector[i] = feature_object[sub_matrix_index]
                 matrix_type = 'ndarray'
             else:
                 raise NotImplementedError()
@@ -195,6 +198,8 @@ class RecursiveClustering(object):
             subset_adjacency_matrix = numpy.concatenate(seq_stack_vector)
         elif matrix_type == 'ndarray':
             subset_adjacency_matrix = numpy.array(seq_stack_vector)
+        elif matrix_type == 'list':
+            subset_adjacency_matrix = seq_stack_vector
         else:
             raise Exception()
 
@@ -216,7 +221,7 @@ class RecursiveClustering(object):
         if isinstance(target_matrix, csr_matrix):
             target_matrix = target_matrix.toarray()
         try:
-            matrix_size = vstack({tuple(row) for row in target_matrix}).shape
+            matrix_size = vstack([row for row in target_matrix]).shape
         except Exception as e:
             logger.error(e, type(target_matrix), target_matrix)
             raise Exception(traceback.extract_stack())
@@ -258,16 +263,17 @@ class RecursiveClustering(object):
 
         for parent_cluster_id, cluster_info_obj in this_level:
             assert isinstance(cluster_info_obj, ClusterObject)
-            if cluster_info_obj.feature_matrix.shape == (1, 1):
+            if cluster_info_obj.feature_type == ndarray and cluster_info_obj.feature_object.shape == (1, 1):
                 logger.debug(msg='Impossible to run clustering anymore. Dpeth={}'.format(self.depth))
                 continue
-            if cluster_info_obj.feature_matrix.shape[0] <= clustering_operator.n_cluster:
+            if cluster_info_obj.feature_type == ndarray and \
+                    cluster_info_obj.feature_object.shape[0] <= clustering_operator.n_cluster:
                 logger.debug(msg='Impossible to run clustering anymore. Dpeth={}'.format(self.depth))
                 continue
 
             core_obj = clustering_operator.instance_clustering
             try:
-                core_obj.fit(X=cluster_info_obj.feature_matrix)
+                core_obj.fit(X=cluster_info_obj.feature_object)
             except Exception as e:
                 error = traceback.format_exc()
                 raise AttributeError(
@@ -306,12 +312,12 @@ class RecursiveClustering(object):
 
     def __get_feature_matrix_in_next_level(self, multi_feature_object: MultiFeatureMatrixObject):
         """It gets feature-matrix in the next node level."""
-        if self.depth + 1 in multi_feature_object.dict_level2matrix_obj:
-            target_matrix = multi_feature_object.dict_level2matrix_obj[self.depth + 1]
+        if self.depth + 1 in multi_feature_object.dict_level2feature_obj:
+            target_matrix = multi_feature_object.dict_level2feature_obj[self.depth + 1]
             matrix_depth_level = self.depth + 1
         else:
-            _max = max(multi_feature_object.dict_level2matrix_obj.keys())
-            target_matrix = multi_feature_object.dict_level2matrix_obj[_max]
+            _max = max(multi_feature_object.dict_level2feature_obj.keys())
+            target_matrix = multi_feature_object.dict_level2feature_obj[_max]
             matrix_depth_level = _max
         return target_matrix, matrix_depth_level
 
@@ -353,14 +359,14 @@ class RecursiveClustering(object):
                     target_matrix, matrix_depth_level = self.__get_feature_matrix_in_next_level(multi_feature_object)
                 else:
                     # if auto-switch is on && diff from median is bigger than threshold; then use first matrix.
-                    target_matrix = multi_feature_object.dict_level2matrix_obj[0]
+                    target_matrix = multi_feature_object.dict_level2feature_obj[0]
                     matrix_depth_level = 0
             else:
                 # use a matrix in next level
                 target_matrix, matrix_depth_level = self.__get_feature_matrix_in_next_level(multi_feature_object)
 
             subset_matrix, dict_submatrix_ind2original_matrix_ind = self.generate_subset_matrix(
-                feature_matrix=target_matrix,
+                feature_object=target_matrix,
                 seq_index_subset_matrix=t_matrix_index_cluster_element.data_ids)
 
             clustering_label = self.get_clustering_class_name(multi_clustering_operator)
@@ -368,9 +374,9 @@ class RecursiveClustering(object):
                 cluster_id=cluster_id,
                 parent_cluster_id=self.dict_child_id2parent_id[cluster_id],
                 data_ids=t_matrix_index_cluster_element.data_ids,
-                average_vector=self.get_average_vector(subset_matrix),
+                average_vector=None if isinstance(subset_matrix, list) else self.get_average_vector(subset_matrix),
                 matrix_depth_level=matrix_depth_level,
-                feature_matrix=subset_matrix,
+                feature_object=subset_matrix,
                 dict_submatrix_index2original_matrix_index=dict_submatrix_ind2original_matrix_ind,
                 clustering_label=clustering_label
             )
@@ -394,32 +400,37 @@ class RecursiveClustering(object):
 
         this_level = [t for t in seq_stack_next_level
                       if t is not None
-                      and t[1].feature_matrix.shape[0] > cluster_operator_obj.n_cluster]
+                      and t[1].feature_object.shape[0] > cluster_operator_obj.n_cluster]
         self.__check_result_distinct(this_level)
 
         return this_level
 
     def __generate_first_layer(self,
-                               feature_matrix_object: Union[csr_matrix, ndarray],
+                               feature_object: Union[csr_matrix, ndarray, List[str]],
                                root_node_id: int=-1)->List[Tuple[int, ClusterObject]]:
         """it generates the first layer of a tree. At the first layer, no need to run clustering.
         Just it's okay to put feature matrix into a root node.
 
         :return: cluster node object in the first layer. (-1, cluster-node-object)
         """
-        first_layer_matrix_obj = feature_matrix_object
-        if isinstance(first_layer_matrix_obj, csr_matrix):
+        first_layer_matrix_obj = feature_object
+        if isinstance(first_layer_matrix_obj, list):
+            dict_submatrix_index2original_matrix_index_level1 = {i: i for i, _ in enumerate(first_layer_matrix_obj)}
+            __average_vector = None
+        elif isinstance(first_layer_matrix_obj, csr_matrix):
             dict_submatrix_index2original_matrix_index_level1 = {i: i for i in
                                                                  range(0, first_layer_matrix_obj.shape[0])}
+            __average_vector = self.get_average_vector(feature_object)
         else:
             dict_submatrix_index2original_matrix_index_level1 = {i: i for i in range(0, len(first_layer_matrix_obj))}
+            __average_vector = self.get_average_vector(feature_object)
 
         initial_clusterinformation_obj = ClusterObject(cluster_id=-1,
                                                        parent_cluster_id=-1,
-                                                       data_ids=list(range(0, feature_matrix_object.shape[0])),
-                                                       feature_matrix=feature_matrix_object,
+                                                       data_ids=list(range(0, len(feature_object))),
+                                                       feature_object=feature_object,
                                                        dict_submatrix_index2original_matrix_index=dict_submatrix_index2original_matrix_index_level1,
-                                                       average_vector=self.get_average_vector(feature_matrix_object),
+                                                       average_vector=__average_vector,
                                                        clustering_label=None)
         this_level = [(root_node_id, initial_clusterinformation_obj)]  # type: List[Tuple[int,ClusterObject]]
         # child-parent relationship
@@ -478,8 +489,7 @@ class RecursiveClustering(object):
         self.is_auto_switch = is_auto_switch
 
         # generate a node in 1st layer(without clustering)
-        this_level = self.__generate_first_layer(multi_feature_matrix_object.dict_level2matrix_obj[0],
-                                                 root_node_id)
+        this_level = self.__generate_first_layer(multi_feature_matrix_object.dict_level2feature_obj[0], root_node_id)
 
         while this_level:
             logger.info(msg='Processing depth level = {}'.format(self.depth))
