@@ -30,7 +30,11 @@ class TestInterface(unittest.TestCase):
         feature_matrix_objects = [FeatureMatrixObject(level=0, feature_strings=input_feature_matrix_1st),
                                   FeatureMatrixObject(level=1, matrix_object=input_feature_matrix_2nd)]
         index2label = {i: "test-{}".format(i) for i in range(0, 100)}
-        multi_feature_input = MultiFeatureMatrixObject(feature_matrix_objects, index2label)
+        multi_feature_input = MultiFeatureMatrixObject(
+            feature_matrix_objects,
+            index2label,
+
+        )
         from flexible_clustering_tree import StringAggregation
         from sklearn.cluster import KMeans
         multi_clustering_operator = MultiClusteringOperator([
@@ -40,6 +44,26 @@ class TestInterface(unittest.TestCase):
         f_clustering = FlexibleClustering(max_depth=3)
         data2cluster = f_clustering.fit_transform(multi_feature_input, multi_clustering_operator)
         self.assertTrue(data2cluster, dict)
+
+    def test_fit_transform_text_aggregation_field(self):
+        import numpy
+        input_feature_matrix_1st = numpy.random.rand(100, 200)
+        input_feature_matrix_2nd = numpy.random.rand(100, 200)
+        from flexible_clustering_tree.models import FeatureMatrixObject, MultiFeatureMatrixObject, ClusteringOperator, MultiClusteringOperator
+        feature_matrix_objects = [FeatureMatrixObject(level=0, matrix_object=input_feature_matrix_1st), FeatureMatrixObject(level=1, matrix_object=input_feature_matrix_2nd)]
+        index2label = {i: "test-{}".format(i) for i in range(0, 100)}
+        text_aggregation_field = [[chr(x) for x in range(ord('a'), ord('z') + 1)] for i in range(0, 100)]
+
+        multi_feature_input = MultiFeatureMatrixObject(matrix_objects=feature_matrix_objects,
+                                                       dict_index2label=index2label,
+                                                       text_aggregation_field=text_aggregation_field)
+        from sklearn.cluster import KMeans
+        multi_clustering_operator = MultiClusteringOperator(
+            [ClusteringOperator(level=0, n_cluster=3, instance_clustering=KMeans(n_clusters=3))])
+        f_clustering = FlexibleClustering(max_depth=5)
+        data2cluster = f_clustering.fit_transform(multi_feature_input, multi_clustering_operator)
+        self.assertTrue(data2cluster, dict)
+        html_doc = f_clustering.clustering_tree.to_html()
 
 
 if __name__ == '__main__':

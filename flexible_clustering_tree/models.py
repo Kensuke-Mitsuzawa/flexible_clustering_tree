@@ -2,13 +2,14 @@
 from numpy import ndarray
 from scipy.sparse.csr import csr_matrix
 # typing
-from typing import List, Dict, Optional, Tuple, Union, Any
+from typing import List, Dict, Optional, Tuple, Union, Any, Callable
 # jinja2
 from jinja2 import Environment, BaseLoader
 # else
-from itertools import groupby
+from itertools import groupby, chain
 from collections import Counter
 from flexible_clustering_tree.logger import logger
+from flexible_clustering_tree.utils import default_fun_string_aggregation
 from copy import deepcopy
 import pkgutil
 import json
@@ -53,26 +54,44 @@ class FeatureMatrixObject(object):
 
 class MultiFeatureMatrixObject(object):
     """Class for 1-input of recursive-clustering"""
-    __slots__ = ("dict_level2feature_obj", "dict_index2label", "dict_index2attributes", "matrix_first_layer")
+    __slots__ = ("dict_level2feature_obj", "dict_index2label", "dict_index2attributes",
+                 "matrix_first_layer", "text_aggregation_field", "n_docs")
 
     def __init__(self,
                  matrix_objects: List[FeatureMatrixObject],
                  dict_index2label: Dict[int, str],
-                 dict_index2attributes: Optional[Dict[int, Dict]]=None):
+                 dict_index2attributes: Optional[Dict[int, Dict]]=None,
+                 text_aggregation_field: Optional[List[List[str]]] = None):
         """Init the class.
 
         :param matrix_objects: matrix object of a layer
         :param dict_index2label: key is index number of a matrix, value is label corresponding to a index.
         :param dict_index2attributes: key is index number of a matrix, value is any attributes.
-        You could use it to put information anything you want.
+            You could use it to put information anything you want.
+        :param text_aggregation_field: a field of text.
+            Text data in this field is aggregated by clusters and used as hint to understand cluster-meaning.
+            The format should be [[str]]. And The size of list should be same as index-size of given matrix.
         """
         assert isinstance(matrix_objects, list)
         assert isinstance(dict_index2label, dict)
         self.__check_level_zero(matrix_objects)
         matrix_index_sizes = [m_o.get_index_size() for m_o in matrix_objects]
+
         if len(set(matrix_index_sizes)) != 1:
             raise Exception("The given matrix size is not same. Sizes of the given matrix sizes are {}".format(
                 set(matrix_index_sizes)))
+        else:
+            self.n_docs = matrix_index_sizes[0]
+
+        if text_aggregation_field is not None:
+            assert len(text_aggregation_field) == self.n_docs, \
+                "len(text_aggregation_field) should be same as index of the give matrix. " \
+                "len(text_aggregation_field)={} but len(index of the give matrix)={}".format(
+                    len(text_aggregation_field), self.n_docs)
+            self.text_aggregation_field = text_aggregation_field
+        else:
+            self.text_aggregation_field = text_aggregation_field
+
         self.__check_match_index_size(matrix_index_sizes, dict_index2label)
 
         self.dict_level2feature_obj = {m_obj.level: m_obj.feature_object for m_obj in matrix_objects}
@@ -226,21 +245,30 @@ class ClusterTreeObject(object):
                  dict_child_id2parent_id: Dict[int, int],
                  dict_depth2clustering_result: Dict[int, Dict[int, ClusterObject]],
                  multi_matrix_object: MultiFeatureMatrixObject,
-                 multi_clustering_object: MultiClusteringOperator):
+                 multi_clustering_object: MultiClusteringOperator,
+                 func_label_aggregation: Callable[[List[str]], Tuple[str, int]] = default_fun_string_aggregation
+                 ):
         """
         :param dict_child_id2parent_id: {child-cluster-id: parent-cluster-id}
         :param dict_depth2clustering_result: {depth-level: {cluster-id: {node-obj}}}
         :param multi_matrix_object:
         :param multi_clustering_object:
+        :param func_label_aggregation: A function to aggregate text/label information.
+            You could your own aggregation function. See default function for the detail.
         """
+        self.func_label_aggregation = func_label_aggregation
         self.multi_matrix_object = multi_matrix_object
         self.dict_child_id2parent_id = dict_child_id2parent_id
         self.dict_depth2clustering_result = dict_depth2clustering_result
         self.dict_parent_cluster_id2children_cluster_id = \
             self.__generate_parent2children()  # type: Dict[int, List[int]]
         self.dict_cluster_id2cluster_obj = self.__generate_cluster_id2cluster_obj()  # type: Dict[int, ClusterObject]
+        # aggregation by clusters.
+        if multi_matrix_object.text_aggregation_field is None:
+            self.dict_cluster_id2cluster_agg_info = self.aggregate_node_information(False)  # type: Dict[int, Dict[str, Any]]
+        else:
+            self.dict_cluster_id2cluster_agg_info = self.aggregate_node_information(True)  # type: Dict[int, Dict[str, Any]]
 
-        self.dict_cluster_id2cluster_agg_info = self.aggregate_node_information()  # type: Dict[int, Dict[str, Any]]
         self.updated_dict_child2parent = self.reshape_tree()  # type: Dict[int, int]
 
     def child_cluster_id2parent_cluster_id(self, child_cluster_id: int)->Union[int, bool]:
@@ -295,10 +323,13 @@ class ClusterTreeObject(object):
 
     # ---------------------------------------------------------------------------------------------------------
 
-    def aggregate_node_information(self) -> Dict[int, Dict[str, Any]]:
+    def aggregate_node_information(self, is_aggregation_text_field: bool = False) -> Dict[int, Dict[str, Any]]:
         """Run aggregation of branch node information, especially "how many data-id the node has?"
         It updates with bottom-up way, in other words, it starts aggregation from leaf level nodes
         and go into branch level nodes.
+
+        :param is_aggregation_text_field: if True, aggregation operation uses text_aggregation_field
+            in self.multi_matrix_object.
         """
         def make_aggregation(_cluster_id: int,
                              _cluster_node_information: ClusterObject) -> None:
@@ -316,12 +347,19 @@ class ClusterTreeObject(object):
                 # if the _cluster_id is leaf node
                 _n_data_point = len(self.dict_cluster_id2cluster_obj[_cluster_id].data_ids)
 
-            c_obj = Counter([self.multi_matrix_object.dict_index2label[d_id]
-                             for d_id in _cluster_node_information.data_ids])
+            if is_aggregation_text_field:
+                # text aggregation from [[str]]
+                __text_data_source = [self.multi_matrix_object.text_aggregation_field[d_id]
+                                      for d_id in _cluster_node_information.data_ids]
+                frequent_text = self.func_label_aggregation(list(chain.from_iterable(__text_data_source)))
+            else:
+                frequent_text = self.func_label_aggregation([self.multi_matrix_object.dict_index2label[d_id]
+                                 for d_id in _cluster_node_information.data_ids])
+
             dict_nodeid2agg_info[_cluster_id] = {
                 "node-type": "branch",
                 "#data": _n_data_point,
-                "frequent_labels": c_obj.most_common(3)}
+                "frequent_labels": frequent_text}
 
         # sort by cluster-id (reverse order), this can make it possible bottom up
         seq_cluster_node_information_obj = [
@@ -457,7 +495,11 @@ class ClusterTreeObject(object):
 
         :param is_child_with_underscore: True; close child cluster nodes in collapsible tree with default
         """
-        self.dict_cluster_id2cluster_agg_info = self.aggregate_node_information()
+        if self.multi_matrix_object.text_aggregation_field is None:
+            self.dict_cluster_id2cluster_agg_info = self.aggregate_node_information(False)
+        else:
+            self.dict_cluster_id2cluster_agg_info = self.aggregate_node_information(True)
+
         self.updated_dict_child2parent = self.reshape_tree()
 
         if len(self.updated_dict_child2parent) == 0:

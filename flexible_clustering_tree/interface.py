@@ -25,6 +25,7 @@ class FlexibleClustering(BaseEstimator):
         clustering_tree: `ClusterTreeObject`
             An object of clustering result. It keeps all information of a result.
             You could get a nested tree object with `to_dict()`
+        labels_: List of cluster id. This is the same style as Kmeans in scikit-learn.
 
         Examples
         ----------
@@ -39,6 +40,7 @@ class FlexibleClustering(BaseEstimator):
         >>> multi_clustering_operator = MultiClusteringOperator([ClusteringOperator(level=0, n_cluster=3, instance_clustering=KMeans(n_clusters=3))])
         >>> f_clustering = FlexibleClustering(max_depth=10)
         >>> f_clustering.fit_transform(multi_feature_input, multi_clustering_operator)
+        >>> f_clustering.labels_  # you could get result by list object. This is the same style as Kmeans in scikit-learn.
 
         Notes
         ------
