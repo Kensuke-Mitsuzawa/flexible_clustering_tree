@@ -49,6 +49,7 @@ class FlexibleClustering(BaseEstimator):
         self.threshold_ratio_auto_switch = threshold_ratio_auto_switch
         self.threshold_minimum_unique_vector = threshold_minimum_unique_vector
         self.clustering_tree = None  # type: ClusterTreeObject
+        self.labels_ = []
 
     def fit(self,
             x: MultiFeatureMatrixObject,
@@ -74,6 +75,12 @@ class FlexibleClustering(BaseEstimator):
             threshold_ratio_auto_switch=self.threshold_ratio_auto_switch,
             threshold_minimum_unique_vector=self.threshold_minimum_unique_vector)
         self.clustering_tree = clustering_tree
+        __labels_ = [None] * len(x.dict_index2label.keys())
+        for cluster_obj in self.clustering_tree.dict_cluster_id2cluster_obj.values():
+            for d_id in cluster_obj.data_ids:
+                __labels_[d_id] = cluster_obj.cluster_id
+        else:
+            self.labels_ = __labels_
 
         return self
 
