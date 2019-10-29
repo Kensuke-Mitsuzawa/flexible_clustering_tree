@@ -17,11 +17,14 @@ class StringAggregation(BaseEstimator, ClusterMixin):
                 'StringAggregation has not list object. This class expects str of list object, but {} is given.'
                     .format(type(X)))
 
-        __t_d_id2str = [(d_id, __str) for d_id, __str in enumerate(X)]
-        labels_ = []
+        __t_d_id2str = {d_id: __str for d_id, __str in enumerate(X)}
+        labels_ = [None] * len(X)
         c_id = 0
-        for __str, g_obj in groupby(sorted(__t_d_id2str, key=lambda t: t[1]), key=lambda t: t[1]):
-            labels_ += [c_id for t in list(g_obj)]
+        for __str, g_obj in groupby(sorted(__t_d_id2str.items(), key=lambda t: t[1]), key=lambda t: t[1]):
+            for t in list(g_obj):
+                labels_[t[0]] = c_id
+            else:
+                pass
             c_id += 1
         else:
             self.labels_ = labels_
