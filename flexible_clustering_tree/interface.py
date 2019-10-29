@@ -25,6 +25,7 @@ class FlexibleClustering(BaseEstimator):
         clustering_tree: `ClusterTreeObject`
             An object of clustering result. It keeps all information of a result.
             You could get a nested tree object with `to_dict()`
+        labels_: List of cluster id. This is the same style as Kmeans in scikit-learn.
 
         Examples
         ----------
@@ -39,6 +40,7 @@ class FlexibleClustering(BaseEstimator):
         >>> multi_clustering_operator = MultiClusteringOperator([ClusteringOperator(level=0, n_cluster=3, instance_clustering=KMeans(n_clusters=3))])
         >>> f_clustering = FlexibleClustering(max_depth=10)
         >>> f_clustering.fit_transform(multi_feature_input, multi_clustering_operator)
+        >>> f_clustering.labels_  # you could get result by list object. This is the same style as Kmeans in scikit-learn.
 
         Notes
         ------
@@ -49,6 +51,7 @@ class FlexibleClustering(BaseEstimator):
         self.threshold_ratio_auto_switch = threshold_ratio_auto_switch
         self.threshold_minimum_unique_vector = threshold_minimum_unique_vector
         self.clustering_tree = None  # type: ClusterTreeObject
+        self.labels_ = []
 
     def fit(self,
             x: MultiFeatureMatrixObject,
@@ -74,6 +77,12 @@ class FlexibleClustering(BaseEstimator):
             threshold_ratio_auto_switch=self.threshold_ratio_auto_switch,
             threshold_minimum_unique_vector=self.threshold_minimum_unique_vector)
         self.clustering_tree = clustering_tree
+        __labels_ = [None] * len(x.dict_index2label.keys())
+        for cluster_obj in self.clustering_tree.dict_cluster_id2cluster_obj.values():
+            for d_id in cluster_obj.data_ids:
+                __labels_[d_id] = cluster_obj.cluster_id
+        else:
+            self.labels_ = __labels_
 
         return self
 
