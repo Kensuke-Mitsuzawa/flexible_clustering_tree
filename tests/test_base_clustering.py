@@ -74,7 +74,7 @@ class TestBaseClustering(unittest.TestCase):
         self.assertTrue(isinstance(tree_object, ClusterTreeObject))
         dict_collapsible_tree = tree_object.to_dict()
         self.assertTrue(dict_collapsible_tree, dict)
-        data_ids = self.__extract_tag_id(dict_collapsible_tree["children"], [])
+        data_ids = set(self.__extract_tag_id(dict_collapsible_tree["children"], []))
         for i in range(0, 100):
             self.assertTrue(i in data_ids)
         # test generating html file
